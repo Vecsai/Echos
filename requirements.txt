@@ -1,0 +1,37 @@
+# === Обязательные ===
+PySide6
+requests
+
+# === Опциональные (программа работает и без них, но с ними функционал полнее) ===
+
+# RAG (база знаний)
+sentence-transformers
+faiss-cpu
+numpy
+
+# Шифрование чатов и вложений
+cryptography
+
+# Графики в статистике
+matplotlib
+
+# Шифрование
+cryptography
+
+# Markdown-рендеринг
+markdown
+
+# Pygments — подсветка синтаксиса кода
+pygments
+
+# Работа с документами
+python-docx
+python-pptx
+PyPDF2
+pypdfium2
+
+# Работа с изображениями
+Pillow
+
+# Схемы через Graphviz (требует установленного Graphviz в системе)
+graphviz

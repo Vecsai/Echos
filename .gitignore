@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# PyCharm
+.idea/
+
+# Личные данные Echos
+chats/
+attachments/
+backups/
+logs/
+corrupted/
+RAG_folder/
+plugins/
+!plugins/_plugin_template.py
+
+# Настройки
+chat_config.json
+folders.json
+tree_order.json
+trash.json
+prompts.json
+last_session.json
+scroll_positions.json
+cursor_positions.json
+draft.txt
+
+# Сборка
+dist/
+build/
+*.exe
+*.zip
