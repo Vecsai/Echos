@@ -165,7 +165,7 @@
 *Модель может генерировать блок-схемы прямо в чате*
 
 ### Экспорт
-![Экспорт](Screenshots/export.png)
+![Экспорт](Screenshots/Export.png)
 
 *Экспорт в JSON, PDF, DOCX, Markdown, HTML и ZIP*
 
