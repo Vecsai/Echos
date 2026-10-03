@@ -152,11 +152,11 @@
 *Окно настроек с параметрами подключения и генерации*
 
 ### Тёмная тема
-![Тёмная тема](Screenshots/Dark_theme)
+![Тёмная тема](Screenshots/Dark_theme.png)
 
 
 ### Светлая тема
-![Светлая тема](Screenshots/light_theme)
+![Светлая тема](Screenshots/light_theme.png)
 
 
 ### Схемы через Graphviz
