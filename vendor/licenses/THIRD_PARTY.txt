@@ -1,0 +1,67 @@
+════════════════════════════════════════════════════════════════
+Echos — сторонние компоненты
+════════════════════════════════════════════════════════════════
+
+Echos использует следующие открытые библиотеки и программы.
+Полные тексты лицензий находятся в файле FULL_LICENSES.txt
+рядом с этим файлом.
+
+════════════════════════════════════════════════════════════════
+1. Echos
+   Лицензия: MIT
+   Copyright (c) 2026 Vecsai
+   https://github.com/Vecsai/Echos
+════════════════════════════════════════════════════════════════
+
+2. Ollama
+   Лицензия: MIT
+   Copyright (c) Ollama, Inc.
+   https://github.com/ollama/ollama
+
+3. Graphviz
+   Лицензия: Eclipse Public License 2.0
+   Copyright (c) AT&T Research и другие участники
+   https://graphviz.org
+
+4. ffmpeg
+   Лицензия: GNU LGPL 2.1 или новее
+   Copyright (c) FFmpeg team
+   https://ffmpeg.org
+
+5. PySide6 / Qt
+   Лицензия: GNU LGPL 3.0
+   Copyright (c) The Qt Company
+   https://qt.io
+
+6. Python
+   Лицензия: Python Software Foundation License
+   Copyright (c) Python Software Foundation
+   https://python.org
+
+7. Другие библиотеки Python
+   sentence-transformers, faiss, numpy, requests, pillow,
+   cryptography, pygments, markdown, python-docx, PyPDF2,
+   pdfplumber, beautifulsoup4, ddgs, faster-whisper и другие.
+   Все распространяются под открытыми лицензиями (MIT, BSD,
+   Apache 2.0, LGPL). Полные тексты — в FULL_LICENSES.txt.
+
+
+8. Microsoft Visual C++ Redistributable
+   Лицензия: Microsoft Software License Terms
+   Copyright (c) Microsoft Corporation
+   https://visualstudio.microsoft.com/license-terms/
+
+   Данный продукт включает установщик Microsoft Visual C++
+   Redistributable (VC_redist.x64.exe), который распространяется
+   в неизменном виде и предназначен для установки компонентов
+   среды выполнения, необходимых для работы программы.
+
+   Использование данного компонента регулируется условиями
+   лицензии Microsoft Software License Terms. Полный текст
+   условий доступен по адресу:
+   https://visualstudio.microsoft.com/license-terms/
+
+════════════════════════════════════════════════════════════════
+Если вы обнаружили нарушение лицензии — сообщите:
+https://github.com/Vecsai/Echos/issues
+════════════════════════════════════════════════════════════════
