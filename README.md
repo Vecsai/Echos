@@ -19,6 +19,7 @@
 
 - [Полное руководство](Documentation/Documentation.md)
 - [Как писать плагины](Documentation/Plugins.md)
+- [Как писать скрипты](Documentation/Scripts.md)
 
 ---
 
