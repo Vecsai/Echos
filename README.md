@@ -7,7 +7,7 @@
 <p align="center"><i>Echos — твой внутренний диалог, ставший видимым.</i></p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-7.0.0-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-7.11.0-blue" alt="Version">
   <img src="https://img.shields.io/badge/python-3.10+-green" alt="Python">
   <img src="https://img.shields.io/badge/license-MIT-yellow" alt="License">
   <img src="https://img.shields.io/badge/platform-Windows-lightgrey" alt="Platform">
