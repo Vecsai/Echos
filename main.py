@@ -248,7 +248,7 @@ except ImportError:
 
 # === Информация о программе ===
 SITES_FILE = "Sites.txt"
-APP_VERSION = "7.0.0"
+APP_VERSION = "7.11.0"
 OLLAMA_HOST_DEFAULT = "http://localhost:11434"
 GITHUB_REPO = "Vecsai/Echos"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -11057,6 +11057,433 @@ class ChatIndexBuildWorker(QThread):
             self.index_ready.emit(self.filepath, ChatHistoryIndex(self.filepath))
 
 
+class AgentManager:
+    """Менеджер агентов: сохранение, загрузка, дефолтные агенты."""
+
+    FILE = "agents.json"
+
+    def __init__(self):
+        self.agents = []
+        self.load()
+
+    # ---------- Дефолтные агенты ----------
+    @staticmethod
+    def _default_agents() -> list:
+        return [
+            {
+                "id": "universal",
+                "name": "Универсальный",
+                "icon": "💬",
+                "system_prompt": "",
+                "model": "",
+                "allowed_tools": [],
+                "max_steps": 5,
+                "temperature": 0.7,
+                "top_p": 0.9,
+                "repeat_penalty": 1.1,
+                "max_tokens": 4096,
+                "builtin": True,
+            },
+            {
+                "id": "coder",
+                "name": "Кодер",
+                "icon": "💻",
+                "system_prompt": (
+                    "Ты опытный программист. Помогаешь писать, читать и "
+                    "исправлять код. Работай пошагово. Когда нужны файлы — "
+                    "используй инструменты, не спрашивай разрешения на чтение."
+                ),
+                "model": "",
+                "allowed_tools": [
+                    "read_file", "list_directory", "tree",
+                    "search_files", "search_within_files",
+                    "write_file", "modify_file",
+                ],
+                "max_steps": 20,
+                "temperature": 0.2,
+                "top_p": 0.95,
+                "repeat_penalty": 1.05,
+                "max_tokens": 8192,
+                "builtin": True,
+            },
+            {
+                "id": "analyst",
+                "name": "Аналитик",
+                "icon": "📊",
+                "system_prompt": (
+                    "Ты исследователь и аналитик. Ищешь информацию, "
+                    "проверяешь факты, даёшь структурированные ответы "
+                    "с источниками. Работай тщательно."
+                ),
+                "model": "",
+                "allowed_tools": [
+                    "read_file", "list_directory",
+                    "search_files", "search_within_files",
+                    "web_search", "fetch_url",
+                ],
+                "max_steps": 15,
+                "temperature": 0.4,
+                "top_p": 0.9,
+                "repeat_penalty": 1.1,
+                "max_tokens": 8192,
+                "builtin": True,
+            },
+            {
+                "id": "writer",
+                "name": "Писатель",
+                "icon": "✍️",
+                "system_prompt": (
+                    "Ты помощник в творческом письме. Помогаешь с текстами, "
+                    "стилем, структурой. Отвечай вдумчиво, предлагай варианты."
+                ),
+                "model": "",
+                "allowed_tools": [],
+                "max_steps": 3,
+                "temperature": 1.0,
+                "top_p": 0.95,
+                "repeat_penalty": 1.15,
+                "max_tokens": 4096,
+                "builtin": True,
+            },
+        ]
+
+    # ---------- Диск ----------
+    def load(self):
+        if os.path.exists(self.FILE):
+            try:
+                with open(self.FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, list) and data:
+                    self.agents = data
+                    return
+            except Exception as e:
+                logger.warning(f"[Agents] Ошибка загрузки: {e}")
+        # Нет файла или битый — создаём дефолтные
+        self.agents = self._default_agents()
+        self.save()
+
+    def save(self):
+        try:
+            with open(self.FILE, "w", encoding="utf-8") as f:
+                json.dump(self.agents, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning(f"[Agents] Ошибка сохранения: {e}")
+
+    # ---------- API ----------
+    def get(self, agent_id: str) -> dict | None:
+        for a in self.agents:
+            if a.get("id") == agent_id:
+                return a
+        return None
+
+    def add(self, agent: dict):
+        # Генерируем уникальный id
+        base_id = agent.get("id") or "custom"
+        existing = {a.get("id") for a in self.agents}
+        new_id = base_id
+        counter = 1
+        while new_id in existing:
+            new_id = f"{base_id}_{counter}"
+            counter += 1
+        agent["id"] = new_id
+        self.agents.append(agent)
+        self.save()
+        return agent
+
+    def update(self, agent_id: str, patch: dict):
+        for i, a in enumerate(self.agents):
+            if a.get("id") == agent_id:
+                # builtin нельзя менять id
+                self.agents[i] = {**a, **patch, "id": agent_id}
+                self.save()
+                return self.agents[i]
+        return None
+
+    def delete(self, agent_id: str):
+        self.agents = [
+            a for a in self.agents
+            if a.get("id") != agent_id or a.get("builtin")
+        ]
+        self.save()
+
+
+class AgentEditDialog(QDialog):
+    """Диалог создания/редактирования агента."""
+
+    def __init__(self, main_window, agent: dict = None, parent=None):
+        super().__init__(parent or main_window)
+        self.main_window = main_window
+        self.agent = dict(agent) if agent else {
+            "id": "", "name": "", "icon": "🤖",
+            "system_prompt": "", "model": "",
+            "allowed_tools": [],
+            "max_steps": 5,
+            "temperature": 0.7, "top_p": 0.9,
+            "repeat_penalty": 1.1, "max_tokens": 4096,
+        }
+        self.is_new = agent is None
+
+        self.setWindowTitle("Новый агент" if self.is_new else f"Агент: {self.agent.get('name', '')}")
+        self.setWindowIcon(QIcon(main_window.resource_path("Image/AI_Agents_2.png")))
+        self.setModal(True)
+        self.resize(600, 700)
+
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+
+        # --- Основное ---
+        top_form = QFormLayout()
+
+        self.edit_name = QLineEdit(self.agent.get("name", ""))
+        self.edit_name.setPlaceholderText("Например: Кодер")
+        top_form.addRow("Имя:", self.edit_name)
+
+        icon_row = QHBoxLayout()
+        self.edit_icon = QLineEdit(self.agent.get("icon", "🤖"))
+        self.edit_icon.setMaxLength(2)
+        self.edit_icon.setFixedWidth(60)
+        self.edit_icon.setStyleSheet("font-size: 22px;")
+        icon_row.addWidget(self.edit_icon)
+        icon_hint = QLabel("(вставь один эмодзи)")
+        icon_hint.setStyleSheet("color: #888; font-size: 11px;")
+        icon_row.addWidget(icon_hint)
+        icon_row.addStretch()
+        top_form.addRow("Иконка:", icon_row)
+
+        self.edit_model = QLineEdit(self.agent.get("model", ""))
+        self.edit_model.setPlaceholderText("Оставь пустым — использовать модель чата")
+        top_form.addRow("Модель:", self.edit_model)
+
+        self.edit_system_prompt = QTextEdit()
+        self.edit_system_prompt.setPlainText(self.agent.get("system_prompt", ""))
+        self.edit_system_prompt.setMaximumHeight(120)
+        self.edit_system_prompt.setPlaceholderText(
+            "Например: Ты опытный программист. Помогай писать код..."
+        )
+        top_form.addRow("System Prompt:", self.edit_system_prompt)
+
+        layout.addLayout(top_form)
+
+        # --- Инструменты ---
+        tools_group = QGroupBox("Разрешённые инструменты")
+        tools_layout = QVBoxLayout(tools_group)
+
+        self.tool_checks = {}
+        available_tools = [
+            ("read_file", "Чтение файлов"),
+            ("list_directory", "Список папок"),
+            ("tree", "Дерево каталогов"),
+            ("search_files", "Поиск файлов"),
+            ("search_within_files", "Поиск внутри файлов"),
+            ("write_file", "Запись файлов ⚠"),
+            ("modify_file", "Изменение файлов ⚠"),
+            ("move_file", "Перемещение ⚠"),
+            ("delete_file", "Удаление ⚠"),
+            ("web_search", "Интернет-поиск"),
+            ("fetch_url", "Загрузка URL"),
+            ("search_chat_history", "Поиск по истории"),
+            ("read_chat_messages", "Чтение сообщений чата"),
+        ]
+        allowed = set(self.agent.get("allowed_tools", []))
+
+        for tool_id, label in available_tools:
+            cb = QCheckBox(label)
+            cb.setChecked(tool_id in allowed)
+            self.tool_checks[tool_id] = cb
+            tools_layout.addWidget(cb)
+
+        layout.addWidget(tools_group)
+
+        # --- Параметры ---
+        params_group = QGroupBox("Параметры генерации")
+        params_form = QFormLayout(params_group)
+
+        self.spin_max_steps = QSpinBox()
+        self.spin_max_steps.setRange(1, 100)
+        self.spin_max_steps.setValue(int(self.agent.get("max_steps", 5)))
+        self.spin_max_steps.setToolTip(
+            "Сколько шагов (вызовов инструментов) агент может сделать подряд."
+        )
+        params_form.addRow("Макс. шагов:", self.spin_max_steps)
+
+        self.spin_temperature = QDoubleSpinBox()
+        self.spin_temperature.setRange(0.0, 2.0)
+        self.spin_temperature.setSingleStep(0.05)
+        self.spin_temperature.setValue(float(self.agent.get("temperature", 0.7)))
+        params_form.addRow("Temperature:", self.spin_temperature)
+
+        self.spin_top_p = QDoubleSpinBox()
+        self.spin_top_p.setRange(0.0, 1.0)
+        self.spin_top_p.setSingleStep(0.05)
+        self.spin_top_p.setValue(float(self.agent.get("top_p", 0.9)))
+        params_form.addRow("Top P:", self.spin_top_p)
+
+        self.spin_repeat = QDoubleSpinBox()
+        self.spin_repeat.setRange(0.0, 2.0)
+        self.spin_repeat.setSingleStep(0.05)
+        self.spin_repeat.setValue(float(self.agent.get("repeat_penalty", 1.1)))
+        params_form.addRow("Repeat Penalty:", self.spin_repeat)
+
+        self.spin_max_tokens = QSpinBox()
+        self.spin_max_tokens.setRange(1, 100000)
+        self.spin_max_tokens.setValue(int(self.agent.get("max_tokens", 4096)))
+        params_form.addRow("Max Tokens:", self.spin_max_tokens)
+
+        layout.addWidget(params_group)
+
+        # --- Кнопки ---
+        btn_box = QHBoxLayout()
+        btn_box.addStretch()
+
+        if not self.is_new and not self.agent.get("builtin"):
+            btn_delete = QPushButton("Удалить")
+            btn_delete.setStyleSheet("color: #d32f2f;")
+            btn_delete.clicked.connect(self._on_delete)
+            btn_box.addWidget(btn_delete)
+
+        btn_save = QPushButton("Сохранить")
+        btn_save.clicked.connect(self._on_save)
+        btn_cancel = QPushButton("Отмена")
+        btn_cancel.clicked.connect(self.reject)
+
+        btn_box.addWidget(btn_save)
+        btn_box.addWidget(btn_cancel)
+        layout.addLayout(btn_box)
+
+    def _on_delete(self):
+        reply = QMessageBox.question(
+            self, "Удалить агента",
+            f"Удалить агента «{self.agent.get('name')}»?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            self.done(2)  # 2 = delete
+
+    def _on_save(self):
+        name = self.edit_name.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Ошибка", "Введите имя агента.")
+            return
+        self.agent["name"] = name
+        self.agent["icon"] = self.edit_icon.text().strip() or "🤖"
+        self.agent["model"] = self.edit_model.text().strip()
+        self.agent["system_prompt"] = self.edit_system_prompt.toPlainText().strip()
+        self.agent["allowed_tools"] = [
+            tid for tid, cb in self.tool_checks.items() if cb.isChecked()
+        ]
+        self.agent["max_steps"] = self.spin_max_steps.value()
+        self.agent["temperature"] = self.spin_temperature.value()
+        self.agent["top_p"] = self.spin_top_p.value()
+        self.agent["repeat_penalty"] = self.spin_repeat.value()
+        self.agent["max_tokens"] = self.spin_max_tokens.value()
+        self.accept()
+
+    def get_agent(self) -> dict:
+        return self.agent
+
+
+class AgentsManagerDialog(QDialog):
+    """Список агентов + управление."""
+
+    def __init__(self, main_window, parent=None):
+        super().__init__(parent or main_window)
+        self.main_window = main_window
+        self.setWindowTitle("Мои агенты")
+        self.setWindowIcon(QIcon(main_window.resource_path("Image/AI_Agents_2.png")))
+        self.setModal(True)
+        self.resize(500, 500)
+
+        layout = QVBoxLayout(self)
+
+        hint = QLabel(
+            "Агент — это сохранённый набор настроек: промпт, модель, "
+            "инструменты, лимит шагов. Выбери агента в параметрах чата — "
+            "и всё применится автоматически."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #888; font-size: 11px; padding: 4px;")
+        layout.addWidget(hint)
+
+        self.list_widget = QListWidget()
+        self.list_widget.itemDoubleClicked.connect(self._on_edit)
+        layout.addWidget(self.list_widget, stretch=1)
+
+        btn_row = QHBoxLayout()
+        btn_new = QPushButton("Новый агент")
+        btn_new.clicked.connect(self._on_new)
+        btn_edit = QPushButton("Редактировать")
+        btn_edit.clicked.connect(self._on_edit)
+        btn_dup = QPushButton("Дублировать")
+        btn_dup.clicked.connect(self._on_duplicate)
+        btn_row.addWidget(btn_new)
+        btn_row.addWidget(btn_edit)
+        btn_row.addWidget(btn_dup)
+        layout.addLayout(btn_row)
+
+        btn_row2 = QHBoxLayout()
+        btn_row2.addStretch()
+        btn_close = QPushButton("Закрыть")
+        btn_close.clicked.connect(self.accept)
+        btn_row2.addWidget(btn_close)
+        layout.addLayout(btn_row2)
+
+        self._refresh()
+
+    def _refresh(self):
+        self.list_widget.clear()
+        for a in self.main_window.agent_manager.agents:
+            icon = a.get("icon", "🤖")
+            name = a.get("name", "?")
+            tools_count = len(a.get("allowed_tools", []))
+            steps = a.get("max_steps", 5)
+            builtin_mark = "  ·  встроенный" if a.get("builtin") else ""
+            text = f"{icon}  {name}  ·  шагов: {steps}  ·  инстр.: {tools_count}{builtin_mark}"
+            item = QListWidgetItem(text)
+            item.setData(Qt.UserRole, a.get("id"))
+            self.list_widget.addItem(item)
+
+    def _get_selected_id(self):
+        item = self.list_widget.currentItem()
+        return item.data(Qt.UserRole) if item else None
+
+    def _on_new(self):
+        dlg = AgentEditDialog(self.main_window, agent=None, parent=self)
+        if dlg.exec() == QDialog.Accepted:
+            self.main_window.agent_manager.add(dlg.get_agent())
+            self._refresh()
+
+    def _on_edit(self):
+        agent_id = self._get_selected_id()
+        if not agent_id:
+            return
+        agent = self.main_window.agent_manager.get(agent_id)
+        if not agent:
+            return
+        dlg = AgentEditDialog(self.main_window, agent=agent, parent=self)
+        result = dlg.exec()
+        if result == QDialog.Accepted:
+            self.main_window.agent_manager.update(agent_id, dlg.get_agent())
+            self._refresh()
+        elif result == 2:  # delete
+            self.main_window.agent_manager.delete(agent_id)
+            self._refresh()
+
+    def _on_duplicate(self):
+        agent_id = self._get_selected_id()
+        if not agent_id:
+            return
+        agent = dict(self.main_window.agent_manager.get(agent_id) or {})
+        if not agent:
+            return
+        agent["id"] = ""
+        agent["name"] = agent.get("name", "") + " (копия)"
+        agent["builtin"] = False
+        self.main_window.agent_manager.add(agent)
+        self._refresh()
+
+
 class MainWindow(QMainWindow):
     """Главное окно приложения.
     Координирует все элементы интерфейса, управляет чатами, папками, настройками, горячими клавишами, отправкой сообщений, уведомлениями и другими функциями.
@@ -11125,9 +11552,11 @@ class MainWindow(QMainWindow):
         self.icon_internet_search = QIcon(self.resource_path("Image/Internet_search.png"))
         self.icon_minimap = QIcon(self.resource_path("Image/Sidebar.png"))
         self.icon_offshoot = QIcon(self.resource_path("Image/Offshoot.png"))
+        self.icon_agents = QIcon(self.resource_path("Image/AI_Agents.png"))
 
         # Белые иконки (из папки Image_White)
         self.icon_bookmarks_white = QIcon(self.resource_path("Image_White/Bookmarks_white.png"))
+        self.icon_agents_white = QIcon(self.resource_path("Image_White/AI_Agents_White.png"))
         self.icon_archive_white = QIcon(self.resource_path("Image_White/Archive_White.png"))
         self.icon_attach_white = QIcon(self.resource_path("Image_White/Attach_White.png"))
         self.icon_chat_white = QIcon(self.resource_path("Image_White/Chat_White.png"))
@@ -11208,6 +11637,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(10000, self._init_chats_index)
 
         self.mcp_manager = MCPManager(self)
+        self.agent_manager = AgentManager()
         self._latex_cache = {}  # {latex_str: data_uri}
         self._copy_icon_uri = icon_to_base64_png(
             self.resource_path("Image/Copy_2.png"),
@@ -11425,6 +11855,9 @@ class MainWindow(QMainWindow):
             self._on_scrollbar_range_changed
         )
 
+        self._mcp_loop_depth = 0
+        self._mcp_max_steps = 4  # будет обновляться при старте генерации
+
         # Отключаем нативные диалоги Windows — чтобы QSS темы применялся
         QApplication.instance().setAttribute(Qt.AA_DontUseNativeDialogs, True)
         self.busy_overlay = BusyOverlay(self)
@@ -11608,6 +12041,12 @@ class MainWindow(QMainWindow):
             },
         "theme": "light"
     }
+
+    def open_agents_manager(self):
+        """Открывает диалог управления агентами."""
+        dlg = AgentsManagerDialog(self, parent=self)
+        dlg.exec()
+        self.statusBar().showMessage("Агенты обновлены", 2000)
 
     def _init_chats_index(self):
         """Загружает индекс из файла или запускает фоновую сборку."""
@@ -13265,6 +13704,23 @@ class MainWindow(QMainWindow):
         """)
         self.btn_mcp.clicked.connect(self.open_mcp_tools_dialog)
 
+        # Кнопка управления агентами
+        self.btn_agents = QPushButton()
+        self.btn_agents.setIcon(self.icon_agents)
+        self.btn_agents.setIconSize(QSize(24, 24))
+        self.btn_agents.setFixedSize(40, 40)
+        self.btn_agents.setToolTip("Мои агенты")
+        self.btn_agents.setStyleSheet("""
+            QPushButton {
+                border-radius: 20px;
+                background-color: #f0f0f0;
+                border: 1px solid #ccc;
+            }
+            QPushButton:hover { background-color: #e0e0e0; }
+            QPushButton:pressed { background-color: #d0d0d0; }
+        """)
+        self.btn_agents.clicked.connect(self.open_agents_manager)
+
         # Кнопка архива (круглая)
         self.btn_archive = QPushButton()
         self.btn_archive.setIcon(self.icon_archive)
@@ -13727,6 +14183,7 @@ class MainWindow(QMainWindow):
         top_panel.addWidget(self.btn_scripts)         # 📜 Скрипты
         top_panel.addWidget(self.btn_settings)        # ⚙ Настройки
         top_panel.addWidget(self.btn_mcp)             # 🔧 MCP
+        top_panel.addWidget(self.btn_agents)
         top_panel.addWidget(self.btn_ollama)          # 🦙 Ollama
         top_panel.addWidget(self.btn_archive)         # 📦 Архив
         top_panel.addWidget(self.btn_trash)           # 🗑 Корзина
@@ -14068,6 +14525,7 @@ class MainWindow(QMainWindow):
             (self.btn_theme, self.icon_theme, self.icon_theme_white),
             (self.btn_toggle_minimap, self.icon_minimap, self.icon_minimap_white),
             (self.btn_ollama, self.icon_ollama, self.icon_ollama_white),
+            (self.btn_agents, self.icon_agents, self.icon_agents_white),
             (self.btn_attach, self.icon_attach, self.icon_attach_white),
             (self.btn_mcp, self.icon_mcp, self.icon_mcp_white),
             (self.btn_scripts,
@@ -14412,6 +14870,7 @@ class MainWindow(QMainWindow):
                         'parent_filepath': None,
                         'parent_title': None,
                         'messages_display_mode': 'wide',
+                        'agent_id': '',
                         'fork_from_idx': None,
                     }
                     self.chats.append(chat_data)
@@ -14487,6 +14946,7 @@ class MainWindow(QMainWindow):
                     'background_selection': data.get('background_selection'),
                     'title_user_set': data.get('title_user_set', False),
                     'parent_filepath': data.get('parent_filepath'),
+                    'agent_id': data.get('agent_id', ''),
                     'parent_title': data.get('parent_title'),
                     'messages_display_mode': data.get('messages_display_mode', 'wide'),
                     'fork_from_idx': data.get('fork_from_idx'),
@@ -15171,6 +15631,7 @@ class MainWindow(QMainWindow):
             'parent_title': None,
             'fork_from_idx': None,
             'messages_display_mode': 'wide',
+            'agent_id': '',
             'encrypted': False
         }
 
@@ -15267,6 +15728,7 @@ class MainWindow(QMainWindow):
             'parent_filepath': None,
             'parent_title': None,
             'fork_from_idx': None,
+            'agent_id': '',
             'incognito': False
         }
         self.chats.append(new_chat)
@@ -19160,6 +19622,7 @@ class MainWindow(QMainWindow):
             "parent_title": chat.get('parent_title'),
             "fork_from_idx": chat.get('fork_from_idx'),
             "messages_display_mode": chat.get('messages_display_mode', 'wide'),
+            "agent_id": chat.get('agent_id', ''),
             "encrypted": chat.get('encrypted', False)
         }
 
@@ -19616,6 +20079,23 @@ class MainWindow(QMainWindow):
 
         # Получаем список инструментов (может быть пустым)
         tools = self.mcp_manager.get_tools() if hasattr(self, 'mcp_manager') else []
+
+        # Фильтр по агенту
+        if 0 <= self.current_chat_index < len(self.chats):
+            chat = self.chats[self.current_chat_index]
+            agent_id = chat.get('agent_id', '')
+            if agent_id and self.agent_manager:
+                agent = self.agent_manager.get(agent_id)
+                if agent:
+                    allowed = set(agent.get("allowed_tools", []))
+                    if allowed:
+                        tools = [
+                            t for t in tools
+                            if t.get("function", {}).get("name") in allowed
+                        ]
+                    else:
+                        # Пустой список инструментов = без инструментов
+                        tools = []
 
         if provider == "ollama":
             host = self.settings.get("ollama_host", OLLAMA_HOST_DEFAULT)
@@ -20094,12 +20574,34 @@ class MainWindow(QMainWindow):
             "top_k": self.settings.get("top_k", 40),
             "repeat_penalty": self.settings.get("repeat_penalty", 1.1)
         }
+        # Агент перекрывает глобальные параметры
+        agent = None
+        agent_id = chat.get('agent_id', '')
+        if agent_id and self.agent_manager:
+            agent = self.agent_manager.get(agent_id)
+            if agent:
+                base_params["max_tokens"] = int(agent.get("max_tokens", base_params["max_tokens"]))
+                base_params["temperature"] = float(agent.get("temperature", base_params["temperature"]))
+                base_params["top_p"] = float(agent.get("top_p", base_params["top_p"]))
+                base_params["repeat_penalty"] = float(agent.get("repeat_penalty", base_params["repeat_penalty"]))
+        # Параметры чата перекрывают агента
         chat_params = chat.get('params', {})
         if chat_params:
             base_params.update(chat_params)
         params = base_params
 
-        model = chat.get('model', self.settings.get('model', 'local-model'))
+        # Агент может переопределить модель
+        model_override = None
+        if agent:
+            model_override = agent.get("model", "").strip() or None
+
+        model = model_override or chat.get('model', self.settings.get('model', 'local-model'))
+
+        # Обновляем лимит шагов из агента
+        if agent:
+            self._mcp_max_steps = max(1, int(agent.get("max_steps", 5)))
+        else:
+            self._mcp_max_steps = 4
 
         self.worker = self._create_worker(model, messages_to_send, params, stream)
         self.worker.chunk_received.connect(self.on_chunk_received)
@@ -21424,9 +21926,11 @@ class MainWindow(QMainWindow):
             self._mcp_loop_depth = 0
         self._mcp_loop_depth += 1
 
-        if self._mcp_loop_depth > 4:
+        if self._mcp_loop_depth > self._mcp_max_steps:
             self._mcp_loop_depth = 0
-            self.statusBar().showMessage("MCP: превышена глубина вызовов инструментов", 5000)
+            self.statusBar().showMessage(
+                f"MCP: достигнут лимит шагов агента ({self._mcp_max_steps})", 5000
+            )
             self.on_finished(partial_text, partial_reasoning)
             return
 
@@ -23979,11 +24483,17 @@ class MainWindow(QMainWindow):
             available_models=available_models,
             current_model=current_model,
             current_display_mode=chat.get('messages_display_mode', 'wide'),
+            current_agent_id=chat.get('agent_id', ''),
+            agent_manager=self.agent_manager,
         )
         if dialog.exec() == QDialog.Accepted:
             result = dialog.get_params()
             chat['params'] = result['params']
             chat['system_prompt'] = result['system_prompt']
+
+            # Сохраняем выбранного агента
+            new_agent_id = result.get('agent_id', '')
+            chat['agent_id'] = new_agent_id or ''
 
             # Обновляем модель, если была выбрана
             new_model = result.get('model')
@@ -29431,7 +29941,7 @@ class SettingsDialog(QDialog):
 
         # Если провайдер Ollama — заполняем список моделей
         if self.combo_provider.currentData() == "ollama":
-            QTimer.singleShot(100, self._refresh_ollama_models)
+            QTimer.singleShot(300, self._refresh_ollama_models)
 
     def init_ui(self):
         # Основная вертикальная разметка окна
@@ -31023,9 +31533,16 @@ class ChatParamsDialog(QDialog):
     def __init__(self, chat_params: dict, global_settings: dict,
                  current_system_prompt: str = "", parent=None,
                  available_models: list = None, current_model: str = "",
-                 current_display_mode: str = "wide"):
+                 current_display_mode: str = "wide",
+                 current_agent_id: str = "",
+                 agent_manager=None):
         super().__init__(parent)
         self.setWindowTitle("Параметры чата")
+        # Иконка окна
+        if parent and hasattr(parent, 'resource_path'):
+            self.setWindowIcon(QIcon(parent.resource_path("Image/Chat_parameters_2.png")))
+        else:
+            self.setWindowIcon(QIcon("Image/Chat_parameters_2.png"))
         self.setModal(True)
         self.chat_params = chat_params.copy()
         self.global_settings = global_settings
@@ -31033,12 +31550,30 @@ class ChatParamsDialog(QDialog):
         self.available_models = available_models or []
         self.current_model = current_model
         self.current_display_mode = current_display_mode or "wide"
+        self.current_agent_id = current_agent_id or ""
+        self.agent_manager = agent_manager
         self._reset_clicked = False
         self.init_ui()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
         form = QFormLayout()
+
+        # === Агент ===
+        self.combo_agent = QComboBox()
+        self.combo_agent.addItem("— Без агента —", "")
+        if self.agent_manager:
+            for a in self.agent_manager.agents:
+                icon = a.get("icon", "🤖")
+                name = a.get("name", "?")
+                self.combo_agent.addItem(f"{icon} {name}", a.get("id"))
+        # Выбор текущего
+        for i in range(self.combo_agent.count()):
+            if self.combo_agent.itemData(i) == self.current_agent_id:
+                self.combo_agent.setCurrentIndex(i)
+                break
+        self.combo_agent.currentIndexChanged.connect(self._on_agent_selected)
+        form.addRow("Агент:", self.combo_agent)
 
         # ---------- Параметры генерации ----------
         self.spin_max_tokens = QSpinBox()
@@ -31180,27 +31715,47 @@ class ChatParamsDialog(QDialog):
 
             # === Предупреждение, если Ollama не отвечает ===
             if _is_ollama:
-                _server_ok = False
-                try:
-                    mgr = getattr(_parent, 'ollama_manager', None)
-                    if mgr is not None and mgr.is_running(timeout=0.5):
-                        _server_ok = True
-                except Exception:
-                    _server_ok = False
+                self.lbl_ollama_warning = QLabel(
+                    "⚠ Ollama не запущен. Нажми «↻» чтобы попробовать снова, "
+                    "или запусти Ollama в менеджере моделей."
+                )
+                self.lbl_ollama_warning.setWordWrap(True)
+                self.lbl_ollama_warning.setStyleSheet(
+                    "color: #d32f2f; background-color: #fdecea; "
+                    "padding: 6px 8px; border-radius: 4px; "
+                    "font-size: 11px;"
+                )
+                form.addRow("", self.lbl_ollama_warning)
 
-                if not _server_ok:
-                    self.lbl_ollama_warning = QLabel(
-                        "⚠ Ollama не запущен. Нажми «↻» чтобы попробовать снова, "
-                        "или запусти Ollama в менеджере моделей."
-                    )
-                    self.lbl_ollama_warning.setWordWrap(True)
-                    self.lbl_ollama_warning.setStyleSheet(
-                        "color: #d32f2f; background-color: #fdecea; "
-                        "padding: 6px 8px; border-radius: 4px; "
-                        "font-size: 11px;"
-                    )
-                    form.addRow("", self.lbl_ollama_warning)
-        # ============================================
+                # Сразу скрываем — покажем только если реально не запущен
+                self.lbl_ollama_warning.setVisible(False)
+
+                # Однократная отложенная проверка (не 3-4 вызова, как было)
+                QTimer.singleShot(250, self._update_ollama_warning)
+            else:
+                self.lbl_ollama_warning = None
+
+    def _on_agent_selected(self, idx):
+        """При выборе агента — подставляет его настройки в поля формы."""
+        agent_id = self.combo_agent.itemData(idx)
+        if not agent_id or not self.agent_manager:
+            return
+        agent = self.agent_manager.get(agent_id)
+        if not agent:
+            return
+        # Параметры генерации
+        self.spin_max_tokens.setValue(int(agent.get("max_tokens", 4096)))
+        self.spin_temperature.setValue(float(agent.get("temperature", 0.7)))
+        self.spin_top_p.setValue(float(agent.get("top_p", 0.9)))
+        self.spin_repeat.setValue(float(agent.get("repeat_penalty", 1.1)))
+        # System prompt
+        self.edit_system_prompt.setPlainText(agent.get("system_prompt", ""))
+        # Модель
+        if self.combo_model is not None:
+            agent_model = agent.get("model", "").strip()
+            if agent_model:
+                self.combo_model.setEditText(agent_model)
+        self._update_preset_highlight()
 
     def _apply_preset(self, name, temperature, top_p, repeat_penalty):
         """Применяет пресет — проставляет значения в поля."""
@@ -31276,13 +31831,8 @@ class ChatParamsDialog(QDialog):
         try:
             manager = parent.ollama_manager
             if manager is None:
-                from PySide6.QtWidgets import QApplication as _QApp
-                # Импорт OllamaManager недоступен здесь — используем существующий
                 if hasattr(parent, '_refresh_ollama_models_cache'):
                     parent._refresh_ollama_models_cache()
-                # Скрываем предупреждение, если оно было
-                if getattr(self, 'lbl_ollama_warning', None) is not None:
-                    self.lbl_ollama_warning.setVisible(False)
                 QTimer.singleShot(1500, self._after_refresh_models)
                 return
 
@@ -31315,6 +31865,40 @@ class ChatParamsDialog(QDialog):
             if self.btn_refresh_models:
                 self.btn_refresh_models.setEnabled(True)
                 self.btn_refresh_models.setText("↻")
+            # Обновляем предупреждение — Ollama могла запуститься/остановиться
+            self._update_ollama_warning()
+
+    def _update_ollama_warning(self):
+        """Обновляет видимость плашки «Ollama не запущен»."""
+        if not hasattr(self, 'lbl_ollama_warning') or self.lbl_ollama_warning is None:
+            return
+
+        parent = self.parent()
+        if parent is None or not hasattr(parent, 'settings'):
+            return
+
+        if parent.settings.get("llm_provider") != "ollama":
+            self.lbl_ollama_warning.setVisible(False)
+            return
+
+        # Используем ТОТ ЖЕ метод, что и основная программа,
+        # чтобы результаты совпадали и не было мигания
+        server_ok = False
+        try:
+            if hasattr(parent, '_check_api_available'):
+                server_ok = parent._check_api_available(timeout=1.5)
+            else:
+                mgr = getattr(parent, 'ollama_manager', None)
+                if mgr is None:
+                    mgr = OllamaManager(
+                        host=parent.settings.get("ollama_host", OLLAMA_HOST_DEFAULT)
+                    )
+                    parent.ollama_manager = mgr  # ← кэшируем, чтобы не создавать заново
+                server_ok = mgr.is_running(timeout=1.5)
+        except Exception:
+            server_ok = False
+
+        self.lbl_ollama_warning.setVisible(not server_ok)
 
     def _after_refresh_models(self):
         """Обновляет combo после фонового обновления кэша."""
@@ -31337,6 +31921,8 @@ class ChatParamsDialog(QDialog):
         if self.btn_refresh_models:
             self.btn_refresh_models.setEnabled(True)
             self.btn_refresh_models.setText("↻")
+        # Обновляем предупреждение
+        self._update_ollama_warning()
 
     def get_params(self) -> dict:
         result = {
@@ -31350,6 +31936,7 @@ class ChatParamsDialog(QDialog):
             'system_prompt': self.edit_system_prompt.toPlainText().strip(),
             'model': None,
             'display_mode': self.combo_display_mode.currentData(),
+            'agent_id': self.combo_agent.currentData() if hasattr(self, 'combo_agent') else '',
         }
         if self.combo_model is not None:
             chosen = self.combo_model.currentText().strip()
